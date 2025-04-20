@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+LightGBM classification with per‑iteration logging and early stopping via callbacks.
+"""
+
+import os
+import numpy as np
+from PIL import Image
+from sklearn.utils import shuffle
+from lightgbm import LGBMClassifier, early_stopping, log_evaluation
+from sklearn.metrics import fbeta_score, classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+
+def load_dataset(root_dir):
+    X, y = [], []
+    labels = sorted(d for d in os.listdir(root_dir)
+                    if os.path.isdir(os.path.join(root_dir, d)))
+    label_to_idx = {lbl: i for i, lbl in enumerate(labels)}
+    for lbl in labels:
+        for fn in os.listdir(os.path.join(root_dir, lbl)):
+            if not fn.lower().endswith('.png'): continue
+            img = Image.open(os.path.join(root_dir, lbl, fn)).convert('RGB')
+            X.append(np.array(img, dtype=np.uint8).flatten())
+            y.append(label_to_idx[lbl])
+    return np.stack(X), np.array(y), labels
+
+def plot_cm(cm, labels):
+    plt.figure(figsize=(8,6))
+    plt.imshow(cm, cmap=plt.cm.Blues, interpolation='nearest')
+    plt.colorbar()
+    ticks = np.arange(len(labels))
+    plt.xticks(ticks, labels, rotation=45)
+    plt.yticks(ticks, labels)
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.tight_layout()
+    plt.show()
+
+def main():
+    train_dir = '/home/shakib/Desktop/S4/machine_learning/mini_projet/biodcase_development_set/final_train/train'
+    test_dir  = '/home/shakib/Desktop/S4/machine_learning/mini_projet/biodcase_development_set/final_train/test'
+
+    print("Loading training data...")
+    X_train, y_train, labels = load_dataset(train_dir)
+    X_train, y_train = shuffle(X_train, y_train, random_state=42)
+    print(f"  → {X_train.shape[0]} samples, {len(labels)} classes")
+
+    print("Loading test data...")
+    X_test, y_test, _ = load_dataset(test_dir)
+    print(f"  → {X_test.shape[0]} samples\n")
+
+    # LightGBM with logging every 10 rounds
+    clf = LGBMClassifier(
+        objective='multiclass',
+        metric='multi_logloss',
+        num_class=len(labels),
+        n_estimators=200,
+        learning_rate=0.05,
+        max_depth=-1,
+        n_jobs=-1,
+        random_state=42,
+        verbose=10
+        # pour GPU : device='gpu', gpu_platform_id=0, gpu_device_id=0
+    )
+
+    print("Training with callbacks for early stopping & logging:")
+    clf.fit(
+        X_train, y_train,
+        eval_set=[(X_train, y_train), (X_test, y_test)],
+        eval_metric='multi_logloss',
+        callbacks=[early_stopping(stopping_rounds=50), log_evaluation(period=10)]
+    )
+
+    print("\nPredicting on test set...")
+    y_pred = clf.predict(X_test)
+
+    f2 = fbeta_score(y_test, y_pred, beta=2, average='macro')
+    print(f"\nF2 score (macro): {f2:.4f}\n")
+
+    print("Classification Report:")
+    print(classification_report(y_test, y_pred, target_names=labels, digits=4))
+
+    cm = confusion_matrix(y_test, y_pred)
+    plot_cm(cm, labels)
+
+if __name__ == "__main__":
+    main()
